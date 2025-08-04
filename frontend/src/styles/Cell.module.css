@@ -1,0 +1,11 @@
+.cell {
+    width: 30px;
+    height: 30px;
+    border: 1px solid #444;
+    background-color: #111;
+    transition: background 0.2s ease;
+}
+
+.filled {
+    background-color: #fca311;
+}
