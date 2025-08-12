@@ -3,10 +3,16 @@ import styles from '../styles/Cell.module.css';
 
 interface CellProps {
     filled: boolean;
+    color?: string;
 }
 
-const Cell: React.FC<CellProps> = ({ filled }) => {
-    return <div className={`${styles.cell} ${filled ? styles.filled : ""}`} />
+const Cell: React.FC<CellProps> = ({ filled, color }) => {
+    return (
+        <div
+            className={styles.cell}
+            style={{ backgroundColor: filled ? color || "white" : "transparent" }}
+        />
+    )
 }
 
 export default Cell;
