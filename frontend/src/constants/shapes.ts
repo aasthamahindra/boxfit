@@ -30,6 +30,8 @@ export const SHAPES = {
     ],
 };
 
+export const COLORS = ["#CAADFF", "#FFADC7", "#F4C8A6", "#a8dadc", "#e2f0cb", "#e9f5db"];
+
 export const getRandomShape = () => {
     const keys = Object.keys(SHAPES) as (keyof typeof SHAPES)[];
     const rand = keys[Math.floor(Math.random() * keys.length)];

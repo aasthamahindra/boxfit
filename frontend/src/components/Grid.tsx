@@ -1,44 +1,58 @@
 import React, { useState, useEffect, useCallback } from "react";
 import Cell from "./Cell";
 import styles from "../styles/Grid.module.css";
-import { getRandomShape } from "../constants/shapes";
+import { getRandomShape, COLORS} from "../constants/shapes";
 
 const ROWS = 20;
 const COLS = 10;
 
 type Position = { x: number; y: number };
+type Piece = { shape: number[][]; position: Position; color: string };
 
-const COLORS = ["#CAADFF", "#FFADC7", "#F4C8A6", "#a8dadc", "#e2f0cb","#e9f5db"];
+/** helpers to convert between list of cells and a matrix */
+const listToMatrix = (locks: { x: number; y: number; color: string }[]) => {
+  const m: (string | null)[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  locks.forEach(({ x, y, color }) => {
+    if (y >= 0 && y < ROWS && x >= 0 && x < COLS) m[y][x] = color;
+  });
+  return m;
+};
 
+const matrixToList = (m: (string | null)[][]) => {
+  const out: { x: number; y: number; color: string }[] = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const c = m[y][x];
+      if (c) out.push({ x, y, color: c });
+    }
+  }
+  return out;
+};
 
 const Grid: React.FC = () => {
-  const [activePiece, setActivePiece] = useState({
+  const [activePiece, setActivePiece] = useState<Piece>({
     shape: getRandomShape(),
-    position: { x: 4, y: 0 } as Position,
-    color: COLORS[Math.floor(Math.random() * COLORS.length)]
+    position: { x: 4, y: 0 },
+    color: COLORS[Math.floor(Math.random() * COLORS.length)],
   });
 
   const [lockedCells, setLockedCells] = useState<{ x: number; y: number; color: string }[]>([]);
+  const [gameOver, setGameOver] = useState(false);
 
-  // collision detection
   const checkCollision = useCallback(
-    (shape: number[][], position: Position) => {
+    (shape: number[][], position: Position, locks: { x: number; y: number }[] = lockedCells) => {
       for (let y = 0; y < shape.length; y++) {
         for (let x = 0; x < shape[y].length; x++) {
-          if (shape[y][x]) {
-            const newX = position.x + x;
-            const newY = position.y + y;
+          if (!shape[y][x]) continue;
 
-            // out of bounds
-            if (newX < 0 || newX >= COLS || newY >= ROWS) {
-              return true;
-            }
+          const newX = position.x + x;
+          const newY = position.y + y;
 
-            // collides with locked block
-            if (lockedCells.some(c => c.x === newX && c.y === newY)) {
-              return true;
-            }
-          }
+          // out of bounds
+          if (newX < 0 || newX >= COLS || newY >= ROWS) return true;
+
+          // collides with locked block
+          if (locks.some((c) => c.x === newX && c.y === newY)) return true;
         }
       }
       return false;
@@ -46,71 +60,104 @@ const Grid: React.FC = () => {
     [lockedCells]
   );
 
-  // lock current piece
-  const lockPiece = useCallback(() => {
-    const newLocks = [...lockedCells];
-    activePiece.shape.forEach((row, dy) => {
-      row.forEach((cell, dx) => {
-        if (cell) {
-          newLocks.push({
-            x: activePiece.position.x + dx,
-            y: activePiece.position.y + dy,
-            color: activePiece.color
-          });
-        }
-      });
-    });
-    setLockedCells(newLocks);
+  /** clear full rows in a matrix and return a new matrix */
+  const clearFullRowsMatrix = (m: (string | null)[][]) => {
+    // keep rows that are not full
+    const keep = m.filter((row) => row.some((cell) => cell === null));
+    const cleared = ROWS - keep.length;
+    const topEmpty = Array.from({ length: cleared }, () => Array(COLS).fill(null));
+    return [...topEmpty, ...keep];
+  };
 
-    // spawn a new piece
-    setActivePiece({
-      shape: getRandomShape(),
-      position: { x: 4, y: 0 },
-      color: COLORS[Math.floor(Math.random() * COLORS.length)]
-    });
-  }, [activePiece, lockedCells]);
+  /** lock a piece and spawn a new one safely */
+  const lockPiece = useCallback(
+    (piece?: Piece) => {
+      const p = piece ?? activePiece;
+      if (!p) return;
 
-  // move piece down automatically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const newPos = { ...activePiece.position, y: activePiece.position.y + 1 };
+      // Merge piece into matrix
+      let matrix = listToMatrix(lockedCells);
+      p.shape.forEach((row, dy) =>
+        row.forEach((cell, dx) => {
+          if (!cell) return;
+          const y = p.position.y + dy;
+          const x = p.position.x + dx;
+          if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+            matrix[y][x] = p.color;
+          }
+        })
+      );
 
-      if (!checkCollision(activePiece.shape, newPos)) {
-        setActivePiece(prev => ({ ...prev, position: newPos }));
-      } else {
-        lockPiece();
+      // clear full rows
+      matrix = clearFullRowsMatrix(matrix);
+
+      // update locked cells state
+      const newLocks = matrixToList(matrix);
+      setLockedCells(newLocks);
+
+      // prepare new piece
+      const nextPiece: Piece = {
+        shape: getRandomShape(),
+        position: { x: 4, y: 0 },
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      };
+
+      // if new piece collides immediately -> game over
+      if (checkCollision(nextPiece.shape, nextPiece.position, newLocks)) {
+        setGameOver(true);
+        return;
       }
-    }, 500); // falls every 500ms
+      setActivePiece(nextPiece);
+    },
+    [activePiece, lockedCells, checkCollision]
+  );
 
+  /** auto fall */
+  useEffect(() => {
+    if (gameOver) return;
+    const interval = setInterval(() => {
+      const newPos = { x: activePiece.position.x, y: activePiece.position.y + 1 };
+      if (!checkCollision(activePiece.shape, newPos)) {
+        setActivePiece((prev) => ({ ...prev, position: newPos }));
+      } else {
+        // lock the current active piece exactly where it is
+        lockPiece(activePiece);
+      }
+    }, 500);
     return () => clearInterval(interval);
-  }, [activePiece, checkCollision, lockPiece]);
+  }, [activePiece, checkCollision, lockPiece, gameOver]);
 
-  // keyboard controls
+  /** keyboard controls */
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowDown") {
-        const newPos = { ...activePiece.position };
+      if (gameOver) return;
 
-        if (e.key === "ArrowLeft") newPos.x -= 1;
-        if (e.key === "ArrowRight") newPos.x += 1;
-        if (e.key === "ArrowDown") newPos.y += 1;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowDown") {
+        const delta = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
+        const newPos = {
+          x: activePiece.position.x + delta,
+          y: activePiece.position.y + (e.key === "ArrowDown" ? 1 : 0),
+        };
 
         if (!checkCollision(activePiece.shape, newPos)) {
-          setActivePiece(prev => ({ ...prev, position: newPos }));
+          setActivePiece((prev) => ({ ...prev, position: newPos }));
+        } else if (e.key === "ArrowDown") {
+          // if moving down collides, lock where it currently is
+          lockPiece(activePiece);
         }
       }
 
-      // instant drop
       if (e.code === "Space") {
-        const dropPos = { ...activePiece.position };
-        while (!checkCollision(activePiece.shape, { ...dropPos, y: dropPos.y + 1 })) {
-          dropPos.y += 1;
+        // hard drop: compute final position first, then lock using that exact piece
+        let dropY = activePiece.position.y;
+        while (!checkCollision(activePiece.shape, { x: activePiece.position.x, y: dropY + 1 })) {
+          dropY += 1;
         }
-        setActivePiece(prev => ({ ...prev, position: dropPos }));
-        lockPiece();
+        const dropped: Piece = { ...activePiece, position: { x: activePiece.position.x, y: dropY } };
+        lockPiece(dropped);
       }
     },
-    [activePiece, checkCollision, lockPiece]
+    [activePiece, checkCollision, lockPiece, gameOver]
   );
 
   useEffect(() => {
@@ -118,12 +165,12 @@ const Grid: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  // render grid
+  /** render grid by overlaying activePiece on top of locked cells */
   const grid = Array.from({ length: ROWS }, (_, row) =>
     Array.from({ length: COLS }, (_, col) => {
       let color: string | null = null;
 
-      // active piece cells
+      // show active piece first so it appears above locks
       activePiece.shape.forEach((shapeRow, dy) => {
         shapeRow.forEach((cell, dx) => {
           if (
@@ -136,18 +183,22 @@ const Grid: React.FC = () => {
         });
       });
 
-      // locked cells
-      lockedCells.forEach(c => {
-        if (c.x === col && c.y === row) {
-          color = c.color;
-        }
-      });
+      // then locked cells
+      if (!color) {
+        const lock = lockedCells.find((c) => c.x === col && c.y === row);
+        if (lock) color = lock.color;
+      }
 
       return <Cell key={`${row}-${col}`} filled={!!color} color={color || undefined} />;
     })
   );
 
-  return <div className={styles.grid}>{grid}</div>;
+  return (
+    <div>
+      {gameOver && <div style={{ marginBottom: 12, color: "#f66", fontWeight: 700 }}>Game Over</div>}
+      <div className={styles.grid}>{grid}</div>
+    </div>
+  );
 };
 
 export default Grid;
