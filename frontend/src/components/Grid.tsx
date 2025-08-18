@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import Cell from "./Cell";
 import styles from "../styles/Grid.module.css";
-import { getRandomShape, COLORS} from "../constants/shapes";
+import { getRandomShape, COLORS } from "../constants/shapes";
 
-const ROWS = 20;
+const ROWS = 12;
 const COLS = 10;
+const CELL_SIZE = 20;
 
 type Position = { x: number; y: number };
 type Piece = { shape: number[][]; position: Position; color: string };
 
-/** helpers to convert between list of cells and a matrix */
+/* helpers to convert between list of cells and a matrix */
 const listToMatrix = (locks: { x: number; y: number; color: string }[]) => {
   const m: (string | null)[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   locks.forEach(({ x, y, color }) => {
@@ -30,14 +31,19 @@ const matrixToList = (m: (string | null)[][]) => {
 };
 
 const Grid: React.FC = () => {
-  const [activePiece, setActivePiece] = useState<Piece>({
+  const createNewPiece = (): Piece => ({
     shape: getRandomShape(),
     position: { x: 4, y: 0 },
     color: COLORS[Math.floor(Math.random() * COLORS.length)],
   });
 
+  const [activePiece, setActivePiece] = useState<Piece>(createNewPiece());
   const [lockedCells, setLockedCells] = useState<{ x: number; y: number; color: string }[]>([]);
   const [gameOver, setGameOver] = useState(false);
+  const [score, setScore] = useState(0);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const checkCollision = useCallback(
     (shape: number[][], position: Position, locks: { x: number; y: number }[] = lockedCells) => {
@@ -62,21 +68,19 @@ const Grid: React.FC = () => {
 
   /** clear full rows in a matrix and return a new matrix */
   const clearFullRowsMatrix = (m: (string | null)[][]) => {
-    // keep rows that are not full
     const keep = m.filter((row) => row.some((cell) => cell === null));
     const cleared = ROWS - keep.length;
     const topEmpty = Array.from({ length: cleared }, () => Array(COLS).fill(null));
-    return [...topEmpty, ...keep];
+    return { newMatrix: [...topEmpty, ...keep], cleared };
   };
 
-  /** lock a piece and spawn a new one safely */
   const lockPiece = useCallback(
     (piece?: Piece) => {
       const p = piece ?? activePiece;
       if (!p) return;
 
       // Merge piece into matrix
-      let matrix = listToMatrix(lockedCells);
+      const matrix = listToMatrix(lockedCells);
       p.shape.forEach((row, dy) =>
         row.forEach((cell, dx) => {
           if (!cell) return;
@@ -88,21 +92,18 @@ const Grid: React.FC = () => {
         })
       );
 
-      // clear full rows
-      matrix = clearFullRowsMatrix(matrix);
+      const { newMatrix, cleared } = clearFullRowsMatrix(matrix);
 
-      // update locked cells state
-      const newLocks = matrixToList(matrix);
+      if (cleared > 0) {
+        const points = cleared === 1 ? 100 : cleared === 2 ? 300 : cleared === 3 ? 500 : 800;
+        setScore((prev) => prev + points);
+      }
+
+      const newLocks = matrixToList(newMatrix);
       setLockedCells(newLocks);
 
-      // prepare new piece
-      const nextPiece: Piece = {
-        shape: getRandomShape(),
-        position: { x: 4, y: 0 },
-        color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      };
-
       // if new piece collides immediately -> game over
+      const nextPiece = createNewPiece();
       if (checkCollision(nextPiece.shape, nextPiece.position, newLocks)) {
         setGameOver(true);
         return;
@@ -112,91 +113,86 @@ const Grid: React.FC = () => {
     [activePiece, lockedCells, checkCollision]
   );
 
-  /** auto fall */
-  useEffect(() => {
+  // Mouse drag handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
     if (gameOver) return;
-    const interval = setInterval(() => {
-      const newPos = { x: activePiece.position.x, y: activePiece.position.y + 1 };
-      if (!checkCollision(activePiece.shape, newPos)) {
-        setActivePiece((prev) => ({ ...prev, position: newPos }));
-      } else {
-        // lock the current active piece exactly where it is
-        lockPiece(activePiece);
-      }
-    }, 500);
-    return () => clearInterval(interval);
-  }, [activePiece, checkCollision, lockPiece, gameOver]);
+    setIsDragging(true);
+    setDragOffset({
+      x: e.clientX - activePiece.position.x * CELL_SIZE,
+      y: e.clientY - activePiece.position.y * CELL_SIZE,
+    });
+  };
 
-  /** keyboard controls */
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (gameOver) return;
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const gridX = Math.round((e.clientX - dragOffset.x) / CELL_SIZE);
+    const gridY = Math.round((e.clientY - dragOffset.y) / CELL_SIZE);
+    if (!checkCollision(activePiece.shape, { x: gridX, y: gridY })) {
+      setActivePiece((prev) => ({ ...prev, position: { x: gridX, y: gridY } }));
+    }
+  };
 
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowDown") {
-        const delta = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
-        const newPos = {
-          x: activePiece.position.x + delta,
-          y: activePiece.position.y + (e.key === "ArrowDown" ? 1 : 0),
-        };
+  const handleMouseUp = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    // Snap & lock the piece
+    lockPiece(activePiece);
+  };
 
-        if (!checkCollision(activePiece.shape, newPos)) {
-          setActivePiece((prev) => ({ ...prev, position: newPos }));
-        } else if (e.key === "ArrowDown") {
-          // if moving down collides, lock where it currently is
-          lockPiece(activePiece);
-        }
-      }
+  // Restart game
+  const handleRestart = () => {
+    setActivePiece(createNewPiece());
+    setLockedCells([]);
+    setScore(0);
+    setGameOver(false);
+  };
 
-      if (e.code === "Space") {
-        // hard drop: compute final position first, then lock using that exact piece
-        let dropY = activePiece.position.y;
-        while (!checkCollision(activePiece.shape, { x: activePiece.position.x, y: dropY + 1 })) {
-          dropY += 1;
-        }
-        const dropped: Piece = { ...activePiece, position: { x: activePiece.position.x, y: dropY } };
-        lockPiece(dropped);
-      }
-    },
-    [activePiece, checkCollision, lockPiece, gameOver]
-  );
-
-  useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
-
-  /** render grid by overlaying activePiece on top of locked cells */
   const grid = Array.from({ length: ROWS }, (_, row) =>
     Array.from({ length: COLS }, (_, col) => {
       let color: string | null = null;
-
-      // show active piece first so it appears above locks
       activePiece.shape.forEach((shapeRow, dy) => {
         shapeRow.forEach((cell, dx) => {
-          if (
-            cell &&
-            activePiece.position.x + dx === col &&
-            activePiece.position.y + dy === row
-          ) {
+          if (cell && activePiece.position.x + dx === col && activePiece.position.y + dy === row) {
             color = activePiece.color;
           }
         });
       });
-
-      // then locked cells
       if (!color) {
         const lock = lockedCells.find((c) => c.x === col && c.y === row);
         if (lock) color = lock.color;
       }
-
       return <Cell key={`${row}-${col}`} filled={!!color} color={color || undefined} />;
     })
   );
 
   return (
     <div>
-      {gameOver && <div style={{ marginBottom: 12, color: "#f66", fontWeight: 700 }}>Game Over</div>}
-      <div className={styles.grid}>{grid}</div>
+      {gameOver && (
+        <div style={{ marginBottom: 12, color: "#f66", fontWeight: 700 }}>
+          Game Over
+          <button
+            onClick={handleRestart}
+            style={{
+              marginLeft: 12,
+              padding: "4px 8px",
+              borderRadius: 4,
+              border: "1px solid #999",
+              cursor: "pointer",
+            }}
+          >
+            Restart
+          </button>
+        </div>
+      )}
+      <div style={{ marginBottom: 8, fontWeight: 600 }}>Score: {score}</div>
+      <div
+        className={styles.grid}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+      >
+        {grid}
+      </div>
     </div>
   );
 };
