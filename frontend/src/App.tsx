@@ -1,37 +1,48 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import Grid from './components/Grid';
 
-// connect to backend
-const socket: Socket = io('http://localhost:3000', {
-  transports: ["websocket"],
-});
-
 const App: React.FC = () => {
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const playerName = 'Player';
+  const roomId = 'default-room';
+  
+  // Initialize socket connection
   useEffect(() => {
-    socket.on('connect', () => {
-      console.log(`Connect to backend server: ${socket.id}`);
+    const newSocket = io('http://localhost:3000', {
+      transports: ["websocket"],
+    });
+    
+    setSocket(newSocket);
+
+    newSocket.on('connect', () => {
+      console.log(`Connected to backend server: ${newSocket.id}`);
     });
 
-    socket.on('disconnect', () => {
+    newSocket.on('disconnect', () => {
       console.log('Disconnected from socket.io server');
     });
 
-    socket.on('connect_error', (err) => {
+    newSocket.on('connect_error', (err) => {
       console.error('Connection error:', err.message);
     });
 
+    // Clean up on unmount
     return () => {
-      socket.disconnect();
+      newSocket.disconnect();
     };
   }, []);
 
+  // Simple form to set player name and room
+  if (!socket) {
+    return <div>Connecting to server...</div>;
+  }
+
   return (
-    <div>
-      <h1>BoxFit</h1>
-      <Grid />
+    <div className="app">
+      <Grid playerName={playerName} roomId={roomId} />
     </div>
   );
 }
 
-export default App
+export default App;
