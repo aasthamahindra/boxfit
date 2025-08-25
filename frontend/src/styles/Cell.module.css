@@ -1,11 +1,23 @@
 .cell {
-    width: 30px;
-    height: 30px;
-    border: 1px solid #444;
-    background-color: #111;
-    transition: background 0.2s ease;
+  width: 25px;
+  height: 25px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background-color: rgba(15, 52, 96, 0.5);
+  transition: all 0.15s ease;
+  border-radius: 2px;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
 }
 
-.filled {
-    background-color: #fca311;
+.cell.filled {
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
+
+.cell.preview {
+  border: 2px dashed rgba(255, 255, 255, 0.5);
+  opacity: 0.8;
+  background-color: transparent;
+}
+
+/* Remove the old .filled class as we're handling colors through props now */
