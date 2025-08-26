@@ -121,18 +121,33 @@ class GameRoom {
   placePiece({ socketId, shape, color, x, y }) {
     if (!this.players.has(socketId)) return { ok: false, reason: 'not-in-room' };
     if (!this.canPlace(shape, x, y)) return { ok: false, reason: 'invalid-placement' };
-    let filled = 0;
+    // Place the piece
     for (let ry = 0; ry < shape.length; ry++) {
       for (let rx = 0; rx < shape[ry].length; rx++) {
         if (!shape[ry][rx]) continue;
         this.grid[y + ry][x + rx] = color;
-        filled += 1;
       }
     }
+
+    // Check for completed rows and clear them
+    let rowsCleared = 0;
+    for (let row = 0; row < GRID_ROWS; row++) {
+      let full = true;
+      for (let col = 0; col < GRID_COLS; col++) {
+        if (this.grid[row][col] === null) { full = false; break; }
+      }
+      if (full) {
+        rowsCleared += 1;
+        // Eliminate row by clearing to null (no gravity/collapse)
+        for (let col = 0; col < GRID_COLS; col++) this.grid[row][col] = null;
+      }
+    }
+
+    // Update score: 100 per completed row
     const p = this.players.get(socketId);
-    p.score += filled; // simple scoring: +1 per filled cell
+    if (rowsCleared > 0) p.score += rowsCleared * 100;
     this.touch();
-    return { ok: true, filled };
+    return { ok: true, rowsCleared };
   }
 
   reset() {
