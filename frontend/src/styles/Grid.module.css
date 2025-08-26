@@ -183,11 +183,24 @@
   border: 2px solid #2a3a5c;
   width: 400px;
   height: 400px;
+  position: relative; /* allow absolute overlay inside */
 }
 
-/* Hover preview overlay blocks (positioned as grid children) */
-.cellOverlay {
-  pointer-events: none;
+/* Absolute overlay layer above grid cells for hover preview */
+.overlayLayer {
+  position: absolute;
+  top: 10px;   /* match .gameGrid padding */
+  left: 10px;  /* match .gameGrid padding */
+  right: 10px; /* match .gameGrid padding */
+  bottom: 10px;/* match .gameGrid padding */
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  grid-template-rows: repeat(10, 1fr);
+  gap: 1px; /* match grid gap so cells align */
+  pointer-events: none; /* never intercept mouse */
+}
+
+.cellOverlay { /* individual overlay cell */
   border-radius: 2px;
 }
 

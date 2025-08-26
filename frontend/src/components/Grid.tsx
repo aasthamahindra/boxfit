@@ -245,29 +245,31 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
             }}
           >
             {renderCells()}
-            {piece && hoverPos && (() => {
-              const { mat } = getRotatedWithAnchor(piece.shape, rotation);
-              const ok = canPlaceClient(state.grid, mat, hoverPos.x, hoverPos.y);
-              const overlay: JSX.Element[] = [];
-              for (let ry = 0; ry < mat.length; ry++) {
-                for (let rx = 0; rx < mat[0].length; rx++) {
-                  if (!mat[ry][rx]) continue;
-                  const idx = (hoverPos.y + ry) * COLS + (hoverPos.x + rx);
-                  overlay.push(
-                    <div
-                      key={`ov-${idx}`}
-                      className={styles.cellOverlay}
-                      style={{
-                        gridColumnStart: hoverPos.x + rx + 1,
-                        gridRowStart: hoverPos.y + ry + 1,
-                        backgroundColor: ok ? 'rgba(46, 204, 113, 0.45)' : 'rgba(231, 76, 60, 0.45)'
-                      }}
-                    />
-                  );
+            <div className={styles.overlayLayer}>
+              {piece && hoverPos && (() => {
+                const { mat } = getRotatedWithAnchor(piece.shape, rotation);
+                const ok = canPlaceClient(state.grid, mat, hoverPos.x, hoverPos.y);
+                const overlay: JSX.Element[] = [];
+                for (let ry = 0; ry < mat.length; ry++) {
+                  for (let rx = 0; rx < mat[0].length; rx++) {
+                    if (!mat[ry][rx]) continue;
+                    const idx = (hoverPos.y + ry) * COLS + (hoverPos.x + rx);
+                    overlay.push(
+                      <div
+                        key={`ov-${idx}`}
+                        className={styles.cellOverlay}
+                        style={{
+                          gridColumnStart: hoverPos.x + rx + 1,
+                          gridRowStart: hoverPos.y + ry + 1,
+                          backgroundColor: ok ? 'rgba(46, 204, 113, 0.45)' : 'rgba(231, 76, 60, 0.45)'
+                        }}
+                      />
+                    );
+                  }
                 }
-              }
-              return <>{overlay}</>;
-            })()}
+                return <>{overlay}</>;
+              })()}
+            </div>
           </div>
           {errorMsg && <div style={{ color: '#e94560' }}>{errorMsg}</div>}
         </div>
@@ -282,7 +284,18 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
               {!piece ? (
                 <span>No piece</span>
               ) : (
-                <PiecePreview piece={piece} rotation={rotation} onDragStart={startDrag} onDragEnd={onDragEnd} />
+                <>
+                  {isSafariRef.current && (
+                    <div style={{ color: '#a8a8a8', fontSize: 12, marginBottom: 6 }}>Safari: Click on the grid to place</div>
+                  )}
+                  <PiecePreview
+                    piece={piece}
+                    rotation={rotation}
+                    onDragStart={startDrag}
+                    onDragEnd={onDragEnd}
+                    draggableEnabled={!isSafariRef.current}
+                  />
+                </>
               )}
             </div>
           </div>
@@ -409,12 +422,13 @@ const PiecePreview: React.FC<{
   rotation: number;
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: () => void;
-}> = ({ piece, rotation, onDragStart, onDragEnd }) => {
+  draggableEnabled?: boolean;
+}> = ({ piece, rotation, onDragStart, onDragEnd, draggableEnabled = true }) => {
   const rotated = rotateMatrix(piece.shape, rotation);
   return (
     <div
       className={`${styles.piecePreview} ${styles.draggable}`}
-      draggable
+      draggable={draggableEnabled}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
@@ -425,7 +439,7 @@ const PiecePreview: React.FC<{
               key={`${x}-${y}`}
               className={`${styles.pieceCell} ${v ? 'filled' : ''} ${styles.draggable}`}
               style={v ? { backgroundColor: piece.color } : undefined}
-              draggable
+              draggable={draggableEnabled}
               onDragStart={onDragStart}
             />
           ))}
