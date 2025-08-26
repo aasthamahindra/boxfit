@@ -1,505 +1,445 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
-import type { JSX } from 'react';
-import styles from "../styles/Grid.module.css";
-import { type Socket, io } from "socket.io-client";
+import { useEffect, useRef, useState, type JSX } from 'react';
+import type { Socket } from 'socket.io-client';
+import io from 'socket.io-client';
+import styles from '../styles/Grid.module.css';
 
-// Shape definitions for the pieces
-const SHAPES = {
-  I: [
-    [1, 1, 1, 1]
-  ],
-  O: [
-    [1, 1],
-    [1, 1]
-  ],
-  T: [
-    [0, 1, 0],
-    [1, 1, 1]
-  ],
-  L: [
-    [0, 0, 1],
-    [1, 1, 1]
-  ],
-  J: [
-    [1, 0, 0],
-    [1, 1, 1]
-  ],
-  S: [
-    [0, 1, 1],
-    [1, 1, 0]
-  ],
-  Z: [
-    [1, 1, 0],
-    [0, 1, 1]
-  ]
-} as const;
-
-type ShapeType = keyof typeof SHAPES;
-
-const ROWS = 20;
+const ROWS = 10;
 const COLS = 10;
 
-// Position type will be defined when needed
+type GridCell = string | null;
 
-interface Player {
+type Player = { id: string; name: string; score: number };
+
+type Piece = { id: string; shape: number[][]; color: string };
+
+type ServerState = {
   id: string;
-  name: string;
-  score: number;
-  grid: (string | null)[][];
-  isAlive: boolean;
-  linesCleared: number;
-  isReady?: boolean;
-  ready?: boolean;
-}
-
-interface ServerPiece {
-  shape: string;
-  color: string;
-  id: string;
-}
-
-interface LeaderboardEntry {
-  rank: number;
-  name: string;
-  score: number;
-  linesCleared: number;
-  isAlive: boolean;
-}
-
-interface GameState {
-  id: string;
-  gameState: 'waiting' | 'playing' | 'ended';
+  gameState: 'playing' | 'waiting' | 'ended';
+  grid: GridCell[][];
   players: Player[];
-  currentPieces: ServerPiece[];
-  leaderboard: LeaderboardEntry[];
   playerCount: number;
   maxPlayers: number;
-  currentTurn?: string | null;
-  currentPiece?: {
-    shape: number[][];
-    position: { x: number; y: number };
-    color: string;
-  } | null;
-  lockedCells?: Array<{ x: number; y: number; color: string }>;
-  winner?: string;
-}
+};
 
 interface GridProps {
   playerName: string;
   roomId: string;
 }
 
-const Grid: React.FC<GridProps> = ({ playerName, roomId }): JSX.Element => {
-  // State management with proper types
-  const [gameState, setGameState] = useState<GameState>({
-    id: '',
-    gameState: 'waiting',
-    players: [],
-    currentPieces: [],
-    leaderboard: [],
-    playerCount: 0,
-    maxPlayers: 2,
-    currentTurn: null,
-    currentPiece: null,
-    lockedCells: []
-  });
-  
-  const [lockedCells, setLockedCells] = useState<Array<{ x: number; y: number; color: string }>>([]);
-  const [currentPiece, setCurrentPiece] = useState<{ 
-    shape: number[][]; 
-    position: { x: number; y: number }; 
-    color: string;
-  } | null>(null);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
+const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
   const socketRef = useRef<Socket | null>(null);
-  const [score, setScore] = useState<number>(0);
-  const [, setLinesCleared] = useState<number>(0);
+  const gridRef = useRef<HTMLDivElement>(null);
 
-  // Initialize socket connection and state
+  const [state, setState] = useState<ServerState>({
+    id: roomId,
+    gameState: 'playing',
+    grid: Array.from({ length: ROWS }, () => Array(COLS).fill(null)),
+    players: [],
+    playerCount: 0,
+    maxPlayers: 8,
+  });
+
+  const [me, setMe] = useState<string>('');
+  const [piece, setPiece] = useState<Piece | null>(null);
+  const [rotation, setRotation] = useState<number>(0);
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const awaitingPlacementRef = useRef(false);
+  const dragImageRef = useRef<HTMLImageElement | HTMLCanvasElement | null>(null);
+  const isSafariRef = useRef(false);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+
+  // connect socket
   useEffect(() => {
-    const socket = io('http://localhost:3000');
+    const socket = io('http://localhost:3000', { transports: ['websocket'] });
     socketRef.current = socket;
 
-    const handleGameStateUpdate = (state: Partial<GameState>): void => {
-      console.log('Game state updated:', state);
-      setGameState(prev => ({
-        ...prev,
-        ...state,
-        currentTurn: state.currentTurn ?? prev.currentTurn ?? null,
-        currentPiece: state.currentPiece ?? prev.currentPiece ?? null,
-        lockedCells: state.lockedCells ?? prev.lockedCells ?? []
-      }));
-
-      // Update current player ID if available
-      if (state.currentTurn) {
-        setCurrentPlayerId(state.currentTurn);
+    const onGameState = (s: ServerState) => setState(s);
+    const onPiece = (p: Piece) => { setPiece(p); setRotation(0); };
+    const onPlacement = (res: { ok: boolean; reason?: string }) => {
+      awaitingPlacementRef.current = false;
+      if (res.ok) {
+        setErrorMsg('');
+        // fetch the next piece only when placement succeeded
+        socketRef.current?.emit('request-piece', { roomId });
+      } else {
+        setErrorMsg(res.reason || 'Invalid placement');
+        // keep current piece so the user can try again
       }
-    };
-
-    const handlePlayerUpdate = (player: Player): void => {
-      setGameState(prev => ({
-        ...prev,
-        players: prev.players.map(p => p.id === player.id ? { ...p, ...player } : p)
-      }));
     };
 
     socket.on('connect', () => {
-      console.log('Connected to server');
+      setMe(socket.id ?? '');
       socket.emit('join-room', { playerName, roomId });
+      socket.emit('request-piece', { roomId });
     });
+    socket.on('game-state', onGameState);
+    socket.on('piece', onPiece);
+    socket.on('placement-result', onPlacement);
 
-    // Set up event listeners
-    socket.on('game-state', handleGameStateUpdate);
-    socket.on('player-update', handlePlayerUpdate);
-    
-    // Cleanup on unmount
-    return (): void => {
-      socket.off('game-state', handleGameStateUpdate);
-      socket.off('player-update', handlePlayerUpdate);
+    return () => {
+      socket.off('game-state', onGameState);
+      socket.off('piece', onPiece);
+      socket.off('placement-result', onPlacement);
       socket.disconnect();
     };
   }, [playerName, roomId]);
-  
-  // Get the other player's name
 
-  // Player info section
-  
-  // Predefined colors for pieces
-
+  // keyboard: R to rotate
   useEffect(() => {
-    const newSocket = io('http://localhost:3000');
-    socketRef.current = newSocket;
-
-    const handleGameStateUpdate = (state: any) => {
-      console.log('Game state updated:', state);
-      setGameState(state);
-      
-      // Update local state based on the current player's grid
-      const currentPlayer = state.players.find((p: any) => p.id === newSocket.id);
-      if (currentPlayer) {
-        const cells: { x: number; y: number; color: string }[] = [];
-        currentPlayer.grid.forEach((row: any[], y: number) => {
-          row.forEach((cell, x) => {
-            if (cell) {
-              cells.push({ x, y, color: cell });
-            }
-          });
-        });
-        setLockedCells(cells);
-        // Score and lines cleared are now part of the game state
-      }
-      
-      // Update current player ID if available
-      if (state.currentPlayerId) {
-        setCurrentPlayerId(state.currentPlayerId);
+    // detect Safari once on mount
+    isSafariRef.current = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        setRotation((r) => (r + 1) % 4);
       }
     };
-
-    newSocket.on('connect', () => {
-      console.log('Connected to server');
-      newSocket.emit('join-room', { playerName, roomId });
-    });
-
-    // Handle game state updates
-    newSocket.on('game-state', (state: any) => {
-      handleGameStateUpdate(state);
-    });
-    
-    // Handle game started event
-    newSocket.on('game-started', (state: any) => {
-      console.log('Game started:', state);
-      handleGameStateUpdate(state);
-      
-      // Reset local state
-      setLockedCells([]);
-      setScore(0);
-      setLinesCleared(0);
-      
-      // Generate initial piece if available
-      if (state.currentPieces && state.currentPieces.length > 0) {
-        const piece = state.currentPieces[0];
-        setCurrentPiece({
-          shape: SHAPES[piece.shape as ShapeType].map(row => [...row]),
-          position: { x: 4, y: 0 },
-          color: piece.color
-        });
-      }
-    });
-
-    // Handle turn changes
-    newSocket.on('turn-changed', ({ currentPlayer, gameState: updatedState }: { currentPlayer: string, gameState: any }) => {
-      console.log('Turn changed to player:', currentPlayer);
-      setCurrentPlayerId(currentPlayer);
-      if (updatedState) {
-        handleGameStateUpdate(updatedState);
-      }
-    });
-
-    // Handle game ended
-    newSocket.on('game-ended', (winner: string) => {
-      console.log('Game ended, winner:', winner);
-      setGameState(prev => ({
-        ...prev,
-        gameState: 'ended',
-        winner
-      }));
-    });
-
-    // Handle player ready updates
-    newSocket.on('player-ready-update', ({ playerId, isReady }: { playerId: string, isReady: boolean }) => {
-      console.log(`Player ${playerId} ready: ${isReady}`);
-      setGameState(prev => ({
-        ...prev,
-        players: prev.players.map(player => 
-          player.id === playerId ? { ...player, isReady } : player
-        )
-      }));
-    });
-
-    // Handle join errors
-    newSocket.on('join-error', (error: string) => {
-      console.error('Failed to join room:', error);
-    });
-
-    // Handle player joined
-    newSocket.on('player-joined', (data: { playerName: string, playerCount: number, gameState?: any }) => {
-      console.log(`Player ${data.playerName} joined the room`);
-      if (data.gameState) {
-        handleGameStateUpdate(data.gameState);
-      }
-    });
-
-    // Clean up on unmount
-    return () => {
-      console.log('Disconnecting socket');
-      newSocket.disconnect();
-    };
-  }, [roomId, playerName]);
-
-  // Generate a random piece
-
-  // Check if a position is valid for the current piece
-
-  // Handle mouse down on a piece
-
-  // Handle mouse up event
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
-    if (!isDragging || !currentPiece) return;
-    
-    const gridElement = gridRef.current;
-    if (!gridElement) return;
-    
-    const rect = gridElement.getBoundingClientRect();
-    if (!rect) return;
-    
-    const gridX = Math.floor((e.clientX - rect.left - dragOffset.x) / 25);
-    const gridY = Math.floor((e.clientY - rect.top - dragOffset.y) / 25);
-    
-    // Emit the piece placement to the server
-    if (socketRef.current) {
-      socketRef.current.emit('place-piece', {
-        x: gridX,
-        y: gridY,
-        roomId
-      });
-    }
-    
-    setIsDragging(false);
-  }, [currentPiece, dragOffset.x, dragOffset.y, isDragging, roomId]);
-
-  // Handle starting the game
-
-  // Handle mouse down on grid
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>): void => {
-    if (!currentPiece) return;
-    
-    const gridElement = gridRef.current;
-    if (!gridElement) return;
-    
-    const rect = gridElement.getBoundingClientRect();
-    if (!rect) return;
-    
-    const offsetY = e.clientY - rect.top - currentPiece.position.y * 25;
-    
-    setDragOffset({ x: 0, y: offsetY });
-    setIsDragging(true);
-  }, [currentPiece]);
-
-  // Render the game grid with proper TypeScript types
-  const renderGrid = useCallback((): JSX.Element => {
-    const gridCells: JSX.Element[] = [];
-    
-    // Create empty grid with proper typing
-    for (let y = 0; y < ROWS; y++) {
-      for (let x = 0; x < COLS; x++) {
-        const cell = lockedCells.find(cell => cell.x === x && cell.y === y);
-        
-        // Check if current cell is part of the current piece
-        if (currentPiece) {
-          const { shape, position, color } = currentPiece;
-          const localX = x - position.x;
-          const localY = y - position.y;
-          
-          if (
-            localY >= 0 && 
-            localY < shape.length && 
-            localX >= 0 && 
-            localX < shape[localY].length && 
-            shape[localY][localX]
-          ) {
-            gridCells.push(
-              <div 
-                key={`${x}-${y}`}
-                className={`${styles.cell} ${styles.currentPiece}`}
-                style={{
-                  gridColumn: x + 1,
-                  gridRow: y + 1,
-                  backgroundColor: color,
-                  border: '1px solid #fff'
-                }}
-              />
-            );
-            continue;
-          }
-        }
-        
-        if (cell) {
-          gridCells.push(
-            <div 
-              key={`${x}-${y}`}
-              className={`${styles.cell} ${styles[cell.color]}`}
-              style={{
-                gridColumn: x + 1,
-                gridRow: y + 1,
-                backgroundColor: cell.color,
-                border: '1px solid rgba(255, 255, 255, 0.1)'
-              }}
-            />
-          );
-        } else {
-          gridCells.push(
-            <div 
-              key={`${x}-${y}`}
-              className={styles.cell}
-              style={{
-                gridColumn: x + 1,
-                gridRow: y + 1,
-                backgroundColor: 'transparent',
-                border: '1px solid rgba(255, 255, 255, 0.1)'
-              }}
-            />
-          );
-        }
-      }
-    }
-    
-    return (
-      <div 
-        ref={gridRef}
-        className={styles.grid}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-      >
-        {gridCells}
-      </div>
-    );
-  }, [lockedCells, currentPiece, handleMouseDown, handleMouseUp]);
-
-  // Handle game restart
-  const handleRestart = useCallback((): void => {
-    if (socketRef.current) {
-      socketRef.current.emit('restart-game');
-      setScore(0);
-      setLinesCleared(0);
-      setLockedCells([]);
-      setCurrentPiece(null);
-    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Pre-render drag image when piece or rotation changes (improves Safari reliability)
+  useEffect(() => {
+    if (!piece) { dragImageRef.current = null; return; }
+    try {
+      const { mat } = getRotatedWithAnchor(piece.shape, rotation);
+      const rows = mat.length;
+      const cols = mat[0].length;
+      const cell = 20;
+      const gap = 2;
+      const pad = 4;
+      const w = cols * cell + (cols - 1) * gap + pad * 2;
+      const h = rows * cell + (rows - 1) * gap + pad * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, w, h);
+        for (let y = 0; y < rows; y++) {
+          for (let x = 0; x < cols; x++) {
+            if (!mat[y][x]) continue;
+            const rx = pad + x * (cell + gap);
+            const ry = pad + y * (cell + gap);
+            ctx.fillStyle = piece.color;
+            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+            ctx.lineWidth = 1;
+            ctx.fillRect(rx, ry, cell, cell);
+            ctx.strokeRect(rx + 0.5, ry + 0.5, cell - 1, cell - 1);
+          }
+        }
+        // Prefer an Image element for Safari
+        const img = new Image();
+        img.onload = () => { dragImageRef.current = img; };
+        img.src = canvas.toDataURL('image/png');
+        // Fallback to canvas immediately until image loads
+        dragImageRef.current = canvas;
+      }
+    } catch {
+      dragImageRef.current = null;
+    }
+  }, [piece, rotation]);
+
+  // drag & drop helpers
+  const startDrag = (e: React.DragEvent) => {
+    if (!piece) return;
+    // Provide multiple mime types to ensure drag starts across browsers
+    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'piece' }));
+    e.dataTransfer.setData('text/plain', 'piece');
+    e.dataTransfer.effectAllowed = 'move';
+    // Ensure previous canceled drags don't block new attempts
+    awaitingPlacementRef.current = false;
+
+    // Create a clean drag image of just the rotated piece (no container box)
+    const img = dragImageRef.current;
+    if (img && !isSafariRef.current) {
+      // Align cursor with the top-left of the rotated matrix (matches server expectation)
+      const { cell, gap, pad } = getRotatedWithAnchor(piece.shape, rotation);
+      const offsetX = pad + 0 * (cell + gap);
+      const offsetY = pad + 0 * (cell + gap);
+      e.dataTransfer.setDragImage(img, offsetX, offsetY);
+    }
+  };
+
+  const onDragOver = (e: React.DragEvent) => {
+    // Always prevent default so the grid is a valid drop target
+    e.preventDefault();
+    e.dataTransfer.dropEffect = piece ? 'move' : 'none';
+    if (!piece || !gridRef.current) return;
+    const { x, y } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation);
+    setHoverPos({ x, y });
+  };
+
+  const onDragEnd = () => {
+    // If the drag is canceled (no drop), allow another attempt
+    awaitingPlacementRef.current = false;
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    if (!piece || !gridRef.current || !socketRef.current) return;
+    e.preventDefault();
+    const { x, y, mat } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation, true);
+    setHoverPos({ x, y });
+    if (!canPlaceClient(state.grid, mat, x, y)) {
+      setErrorMsg('invalid-placement');
+      return;
+    }
+    if (awaitingPlacementRef.current) return;
+    awaitingPlacementRef.current = true;
+    socketRef.current.emit('place-item', { roomId, piece, x, y, rotation });
+  };
+
+  // Safari-friendly fallback: click to place piece at the clicked cell
+  const onGridClick = (e: React.MouseEvent) => {
+    if (!piece || !gridRef.current || !socketRef.current) return;
+    if (awaitingPlacementRef.current) return;
+    const { x, y, mat } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation, true);
+    setHoverPos({ x, y });
+    if (!canPlaceClient(state.grid, mat, x, y)) {
+      setErrorMsg('invalid-placement');
+      return;
+    }
+    awaitingPlacementRef.current = true;
+    socketRef.current.emit('place-item', { roomId, piece, x, y, rotation });
+  };
+
+  const onGridMouseLeave = () => setHoverPos(null);
+
+  const rotate = () => setRotation((r) => (r + 1) % 4);
+  const reset = () => socketRef.current?.emit('reset', { roomId });
+  const newPiece = () => socketRef.current?.emit('request-piece', { roomId });
+
+  const renderCells = () => {
+    const cells: JSX.Element[] = [];
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const color = state.grid[y]?.[x] || undefined;
+        cells.push(
+          <div
+            key={`c-${x}-${y}`}
+            className={styles.cell}
+            style={color ? { backgroundColor: color } : undefined}
+          />
+        );
+      }
+    }
+    return cells;
+  };
+
   return (
-    <div className={styles.gridContainer}>
-      {/* Left Panel - Game Info */}
-      <div className={styles.leftPanel}>
-        <div className={styles.gameInfo}>
-          <h2>Room: {roomId}</h2>
-          <div className={styles.playersList}>
-            <h3>Players:</h3>
-            {gameState.players.length > 0 ? (
-              gameState.players.map((player) => (
-                <div key={player.id} className={`${styles.playerItem} ${player.id === currentPlayerId ? styles.currentPlayer : ''}`}>
-                  {player.name} {player.id === currentPlayerId && '(You)'}
-                </div>
-              ))
-            ) : (
-              <div className={styles.noPlayers}>No players yet</div>
-            )}
+    <div className={styles.gameContainer}>
+      <div className={styles.gameArea}>
+        <div className={styles.gridContainer}>
+          <div
+            className={styles.gameGrid}
+            ref={gridRef}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            onDragEnd={onDragEnd}
+            onClick={onGridClick}
+            onMouseLeave={onGridMouseLeave}
+            onMouseMove={(e) => {
+              if (!piece || !gridRef.current) return;
+              const { x, y } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation);
+              setHoverPos({ x, y });
+            }}
+          >
+            {renderCells()}
+            {piece && hoverPos && (() => {
+              const { mat } = getRotatedWithAnchor(piece.shape, rotation);
+              const ok = canPlaceClient(state.grid, mat, hoverPos.x, hoverPos.y);
+              const overlay: JSX.Element[] = [];
+              for (let ry = 0; ry < mat.length; ry++) {
+                for (let rx = 0; rx < mat[0].length; rx++) {
+                  if (!mat[ry][rx]) continue;
+                  const idx = (hoverPos.y + ry) * COLS + (hoverPos.x + rx);
+                  overlay.push(
+                    <div
+                      key={`ov-${idx}`}
+                      className={styles.cellOverlay}
+                      style={{
+                        gridColumnStart: hoverPos.x + rx + 1,
+                        gridRowStart: hoverPos.y + ry + 1,
+                        backgroundColor: ok ? 'rgba(46, 204, 113, 0.45)' : 'rgba(231, 76, 60, 0.45)'
+                      }}
+                    />
+                  );
+                }
+              }
+              return <>{overlay}</>;
+            })()}
           </div>
-          
-          {/* Current Player Status */}
-          <div className={styles.playerStatus}>
-            {currentPlayerId === socketRef.current?.id ? '(Your turn)' : '(Waiting...)'}
-          </div>
+          {errorMsg && <div style={{ color: '#e94560' }}>{errorMsg}</div>}
         </div>
-      </div>
 
-      {/* Main Game Grid */}
-      <div className={styles.grid} ref={gridRef}>
-        {renderGrid()}
-        
-        {/* Game Over Overlay */}
-        {gameState.gameState === 'ended' && (
-          <div className={styles.overlay}>
-            <div className={styles.overlayContent}>
-              <h2>Game Over!</h2>
-              <p>
-                {gameState.winner === socketRef.current?.id 
-                  ? 'You won!' 
-                  : `${gameState.players.find(p => p.id === gameState.winner)?.name || 'Player'} won!`}
-              </p>
-              <button onClick={handleRestart} className={styles.button}>
-                Play Again
-              </button>
+        <div className={styles.gameInfo}>
+          <h3>Score: {state.players.find((p) => p.id === me)?.score ?? 0}</h3>
+          <div className={styles.sectionTitle}>Next Item</div>
+          <div className={styles.playersList}>
+            <div className={styles.nextPiece}
+                 style={{ cursor: piece ? 'grab' : 'not-allowed' }}
+                 title={piece ? 'Drag onto the grid' : 'No piece yet'}>
+              {!piece ? (
+                <span>No piece</span>
+              ) : (
+                <PiecePreview piece={piece} rotation={rotation} onDragStart={startDrag} onDragEnd={onDragEnd} />
+              )}
             </div>
           </div>
-        )}
-        
-        {/* Waiting to Start Overlay */}
-        {gameState.gameState === 'waiting' && (
-          <div className={styles.overlay}>
-            <div className={styles.overlayContent}>
-              <h2>Waiting for players...</h2>
-              <p>
-                {gameState.gameState === 'waiting' 
-                  ? 'Waiting for the game to start...' 
-                  : `Your score: ${score}`}
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
 
-      {/* Right Panel - Leaderboard */}
-      <div className={styles.rightPanel}>
-        <div className={styles.sectionTitle}>LEADERBOARD</div>
-        <div className={styles.leaderboard}>
-          {gameState.leaderboard.length > 0 ? (
-            gameState.leaderboard.map((entry) => (
-              <div key={entry.rank} className={styles.leaderboardEntry}>
-                <span className={styles.rank}>#{entry.rank}</span>
-                <span className={styles.leaderboardName}>{entry.name}</span>
-                <span className={styles.leaderboardScore}>{entry.score}</span>
-              </div>
-            ))
-          ) : (
-            <div className={styles.noPlayers}>No players yet</div>
-          )}
+          <div className={styles.sectionTitle}>Players</div>
+          <div className={styles.playersList}>
+            {state.players.map((p) => {
+              const dotColor = colorFromString(p.id);
+              return (
+                <div key={p.id} className={styles.player}>
+                  <span className={styles.playerName}>
+                    <span style={{
+                      display: 'inline-block', width: 12, height: 12, borderRadius: '50%',
+                      backgroundColor: dotColor
+                    }} />
+                    {p.name} {p.id === me && <span className={styles.youBadge}>(You)</span>}
+                  </span>
+                  <span className={styles.playerScore}>{p.score}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className={styles.controls}>
+            <button className={styles.controlButton} onClick={rotate}>Rotate (R)</button>
+            <button className={styles.controlButton} onClick={newPiece}>New Piece</button>
+            <button className={styles.controlButton} onClick={reset}>Reset Grid</button>
+          </div>
         </div>
       </div>
     </div>
   );
 };
+
+function rotateMatrix(shape: number[][], times: number) {
+  let m = shape.map((r) => r.slice());
+  for (let t = 0; t < (times % 4 + 4) % 4; t++) {
+    const rows = m.length, cols = m[0].length;
+    const r = Array.from({ length: cols }, () => Array(rows).fill(0));
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        r[x][rows - 1 - y] = m[y][x];
+      }
+    }
+    m = r;
+  }
+  return m;
+}
+
+function getRotatedWithAnchor(shape: number[][], rotation: number) {
+  const mat = rotateMatrix(shape, rotation);
+  // anchor at the top-left filled cell in the rotated matrix
+  let minX = Infinity, minY = Infinity;
+  for (let y = 0; y < mat.length; y++) {
+    for (let x = 0; x < mat[0].length; x++) {
+      if (mat[y][x]) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+      }
+    }
+  }
+  const anchorX = isFinite(minX) ? minX : 0;
+  const anchorY = isFinite(minY) ? minY : 0;
+  // constants used for drag image drawing
+  const cell = 20;
+  const gap = 2;
+  const pad = 4;
+  return { mat, anchorX, anchorY, cell, gap, pad };
+}
+
+// Client-side validator mirrors server's canPlace
+function canPlaceClient(grid: (string | null)[][], shape: number[][], x: number, y: number) {
+  const rows = grid.length;
+  const cols = grid[0]?.length ?? 0;
+  for (let ry = 0; ry < shape.length; ry++) {
+    for (let rx = 0; rx < shape[ry].length; rx++) {
+      if (!shape[ry][rx]) continue;
+      const gx = x + rx;
+      const gy = y + ry;
+      if (gx < 0 || gy < 0 || gx >= cols || gy >= rows) return false;
+      if (grid[gy][gx] !== null) return false;
+    }
+  }
+  return true;
+}
+
+// Convert pointer coordinates to grid indices, accounting for padding and borders
+function getGridCoordsFromEvent(
+  e: { clientX: number; clientY: number },
+  gridEl: HTMLDivElement,
+  shape: number[][],
+  rotation: number,
+  _clamp: boolean = true,
+) {
+  const rect = gridEl.getBoundingClientRect();
+  const cs = window.getComputedStyle(gridEl);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  const padT = parseFloat(cs.paddingTop) || 0;
+  const padB = parseFloat(cs.paddingBottom) || 0;
+  const bL = parseFloat(cs.borderLeftWidth) || 0;
+  const bR = parseFloat(cs.borderRightWidth) || 0;
+  const bT = parseFloat(cs.borderTopWidth) || 0;
+  const bB = parseFloat(cs.borderBottomWidth) || 0;
+
+  const contentW = rect.width - padL - padR - bL - bR;
+  const contentH = rect.height - padT - padB - bT - bB;
+  const cellW = contentW / COLS;
+  const cellH = contentH / ROWS;
+
+  let x = Math.floor((e.clientX - rect.left - bL - padL) / cellW);
+  let y = Math.floor((e.clientY - rect.top - bT - padT) / cellH);
+
+  const { mat } = getRotatedWithAnchor(shape, rotation);
+  const maxX = COLS - mat[0].length;
+  const maxY = ROWS - mat.length;
+  x = Math.max(0, Math.min(maxX, x));
+  y = Math.max(0, Math.min(maxY, y));
+  return { x, y, mat };
+}
+
+const PiecePreview: React.FC<{
+  piece: Piece;
+  rotation: number;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
+}> = ({ piece, rotation, onDragStart, onDragEnd }) => {
+  const rotated = rotateMatrix(piece.shape, rotation);
+  return (
+    <div
+      className={`${styles.piecePreview} ${styles.draggable}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+    >
+      {rotated.map((row, y) => (
+        <div key={y} className={styles.pieceRow}>
+          {row.map((v, x) => (
+            <div
+              key={`${x}-${y}`}
+              className={`${styles.pieceCell} ${v ? 'filled' : ''} ${styles.draggable}`}
+              style={v ? { backgroundColor: piece.color } : undefined}
+              draggable
+              onDragStart={onDragStart}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+function colorFromString(s: string) {
+  const colors = ['#4cc9f0', '#e94560', '#f4c8a6', '#a8dadc', '#caadff', '#ffd166'];
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return colors[h % colors.length];
+}
 
 export default Grid;
