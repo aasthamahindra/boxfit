@@ -19,6 +19,9 @@ type ServerState = {
   players: Player[];
   playerCount: number;
   maxPlayers: number;
+  activePlayerId?: string | null;
+  turnEndsAt?: number;
+  turnDurationMs?: number;
 };
 
 interface GridProps {
@@ -37,6 +40,9 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
     players: [],
     playerCount: 0,
     maxPlayers: 8,
+    activePlayerId: null,
+    turnEndsAt: 0,
+    turnDurationMs: 30000,
   });
 
   const [me, setMe] = useState<string>('');
@@ -47,6 +53,10 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
   const dragImageRef = useRef<HTMLImageElement | HTMLCanvasElement | null>(null);
   const isSafariRef = useRef(false);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  const isMyTurn = state.activePlayerId === me;
+  const remainingSec = Math.max(0, Math.floor(((state.turnEndsAt || 0) - nowMs) / 1000));
 
   // connect socket
   useEffect(() => {
@@ -98,6 +108,12 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Tick for countdown
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+
   // Pre-render drag image when piece or rotation changes (improves Safari reliability)
   useEffect(() => {
     if (!piece) { dragImageRef.current = null; return; }
@@ -143,6 +159,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
   // drag & drop helpers
   const startDrag = (e: React.DragEvent) => {
     if (!piece) return;
+    if (!isMyTurn) { e.preventDefault(); setErrorMsg('not-your-turn'); return; }
     // Provide multiple mime types to ensure drag starts across browsers
     e.dataTransfer.setData('application/json', JSON.stringify({ type: 'piece' }));
     e.dataTransfer.setData('text/plain', 'piece');
@@ -164,7 +181,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
   const onDragOver = (e: React.DragEvent) => {
     // Always prevent default so the grid is a valid drop target
     e.preventDefault();
-    e.dataTransfer.dropEffect = piece ? 'move' : 'none';
+    e.dataTransfer.dropEffect = piece && isMyTurn ? 'move' : 'none';
     if (!piece || !gridRef.current) return;
     const { x, y } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation);
     setHoverPos({ x, y });
@@ -177,6 +194,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
 
   const onDrop = (e: React.DragEvent) => {
     if (!piece || !gridRef.current || !socketRef.current) return;
+    if (!isMyTurn) { e.preventDefault(); setErrorMsg('not-your-turn'); return; }
     e.preventDefault();
     const { x, y, mat } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation, true);
     setHoverPos({ x, y });
@@ -192,6 +210,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
   // Safari-friendly fallback: click to place piece at the clicked cell
   const onGridClick = (e: React.MouseEvent) => {
     if (!piece || !gridRef.current || !socketRef.current) return;
+    if (!isMyTurn) { setErrorMsg('not-your-turn'); return; }
     if (awaitingPlacementRef.current) return;
     const { x, y, mat } = getGridCoordsFromEvent(e, gridRef.current, piece.shape, rotation, true);
     setHoverPos({ x, y });
@@ -207,7 +226,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
 
   const rotate = () => setRotation((r) => (r + 1) % 4);
   const reset = () => socketRef.current?.emit('reset', { roomId });
-  const newPiece = () => socketRef.current?.emit('request-piece', { roomId });
+  const newPiece = () => { if (isMyTurn) socketRef.current?.emit('request-piece', { roomId }); };
 
   const renderCells = () => {
     const cells: JSX.Element[] = [];
@@ -230,6 +249,16 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
     <div className={styles.gameContainer}>
       <div className={styles.gameArea}>
         <div className={styles.gridContainer}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, marginBottom: 4 }}>
+            <div>
+              <strong>Turn: </strong> {state.activePlayerId ? (state.activePlayerId === me ? 'You' : state.players.find(p => p.id === state.activePlayerId)?.name || '...') : '—'}
+            </div>
+            {isMyTurn && (
+              <div>
+                <strong>Time left:</strong> {remainingSec}s
+              </div>
+            )}
+          </div>
           <div
             className={styles.gameGrid}
             ref={gridRef}
@@ -279,21 +308,21 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
           <div className={styles.sectionTitle}>Next Item</div>
           <div className={styles.playersList}>
             <div className={styles.nextPiece}
-                 style={{ cursor: piece ? 'grab' : 'not-allowed' }}
-                 title={piece ? 'Drag onto the grid' : 'No piece yet'}>
+                 style={{ cursor: piece && isMyTurn ? 'grab' : 'not-allowed', opacity: isMyTurn ? 1 : 0.6 }}
+                 title={!piece ? 'No piece yet' : (isMyTurn ? 'Drag onto the grid' : 'Wait for your turn')}>
               {!piece ? (
                 <span>No piece</span>
               ) : (
                 <>
                   {isSafariRef.current && (
-                    <div style={{ color: '#a8a8a8', fontSize: 12, marginBottom: 6 }}>Safari: Click on the grid to place</div>
+                    <div style={{ color: '#a8a8a8', fontSize: 12, marginBottom: 6 }}></div>
                   )}
                   <PiecePreview
                     piece={piece}
                     rotation={rotation}
                     onDragStart={startDrag}
                     onDragEnd={onDragEnd}
-                    draggableEnabled={!isSafariRef.current}
+                    draggableEnabled={!isSafariRef.current && isMyTurn}
                   />
                 </>
               )}
@@ -311,7 +340,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
                       display: 'inline-block', width: 12, height: 12, borderRadius: '50%',
                       backgroundColor: dotColor
                     }} />
-                    {p.name} {p.id === me && <span className={styles.youBadge}>(You)</span>}
+                    {p.name} {p.id === me && <span className={styles.youBadge}>(You)</span>} {p.id === state.activePlayerId && <span className={styles.youBadge}>Your Turn</span>}
                   </span>
                   <span className={styles.playerScore}>{p.score}</span>
                 </div>
@@ -321,7 +350,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
 
           <div className={styles.controls}>
             <button className={styles.controlButton} onClick={rotate}>Rotate (R)</button>
-            <button className={styles.controlButton} onClick={newPiece}>New Piece</button>
+            <button className={styles.controlButton} onClick={newPiece} disabled={!isMyTurn}>New Piece</button>
             <button className={styles.controlButton} onClick={reset}>Reset Grid</button>
           </div>
         </div>

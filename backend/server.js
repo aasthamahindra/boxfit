@@ -26,6 +26,25 @@ const io = new Server(server, {
   serveClient: false,
 });
 
+// Turn timeout tick: check rooms and advance when expired
+setInterval(() => {
+  const now = Date.now();
+  for (const [roomId, room] of gameRooms.entries()) {
+    if (!room.activePlayerId) continue;
+    if (now > room.turnEndsAt) {
+      // Skip current player's turn
+      const cur = room.activePlayerId;
+      room.assignedPieceByPlayer.set(cur, null);
+      room.advanceTurn();
+      io.to(roomId).emit('game-state', room.state());
+      if (room.activePlayerId) {
+        const assigned = room.assignedPieceByPlayer.get(room.activePlayerId);
+        if (assigned) io.to(room.activePlayerId).emit('piece', assigned);
+      }
+    }
+  }
+}, 1000);
+
 // Track connections to prevent memory leaks
 const activeConnections = new Set();
 
@@ -85,20 +104,40 @@ class GameRoom {
     this.id = id;
     this.players = new Map(); // socketId -> { id, name, score }
     this.grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
-    this.gameState = 'playing'; // collaborative by default
+    this.gameState = 'playing';
     this.maxPlayers = 8;
     this.lastActivity = Date.now();
+    // turn-based state
+    this.turnOrder = []; // socketId[]
+    this.turnIndex = 0;
+    this.activePlayerId = null;
+    this.turnDurationMs = 30000; // 30s per turn
+    this.turnEndsAt = 0;
+    this.pieceQueue = [];
+    this.assignedPieceByPlayer = new Map();
   }
 
   addPlayer(socketId, playerName) {
     if (this.players.size >= this.maxPlayers) return false;
     this.players.set(socketId, { id: socketId, name: playerName, score: 0 });
+    this.turnOrder.push(socketId);
+    this.assignedPieceByPlayer.set(socketId, null);
     this.touch();
+    // if first player, start turns
+    if (!this.activePlayerId) this.startTurn();
     return true;
   }
 
   removePlayer(socketId) {
     this.players.delete(socketId);
+    this.assignedPieceByPlayer.delete(socketId);
+    const idx = this.turnOrder.indexOf(socketId);
+    if (idx !== -1) this.turnOrder.splice(idx, 1);
+    if (this.activePlayerId === socketId) {
+      // If active player left, advance turn safely
+      this.activePlayerId = null;
+      this.advanceTurn();
+    }
     this.touch();
     return this.players.size === 0;
   }
@@ -120,6 +159,7 @@ class GameRoom {
 
   placePiece({ socketId, shape, color, x, y }) {
     if (!this.players.has(socketId)) return { ok: false, reason: 'not-in-room' };
+    if (this.activePlayerId && socketId !== this.activePlayerId) return { ok: false, reason: 'not-your-turn' };
     if (!this.canPlace(shape, x, y)) return { ok: false, reason: 'invalid-placement' };
     // Place the piece
     for (let ry = 0; ry < shape.length; ry++) {
@@ -147,6 +187,10 @@ class GameRoom {
     const p = this.players.get(socketId);
     if (rowsCleared > 0) p.score += rowsCleared * 100;
     this.touch();
+    // Clear assigned piece for the player who placed
+    this.assignedPieceByPlayer.set(socketId, null);
+    // Advance turn for the next player
+    this.advanceTurn();
     return { ok: true, rowsCleared };
   }
 
@@ -164,7 +208,41 @@ class GameRoom {
       players: Array.from(this.players.values()),
       playerCount: this.players.size,
       maxPlayers: this.maxPlayers,
+      activePlayerId: this.activePlayerId,
+      turnEndsAt: this.turnEndsAt,
+      turnDurationMs: this.turnDurationMs,
     };
+  }
+
+  // --- Turn helpers ---
+  startTurn() {
+    if (this.turnOrder.length === 0) {
+      this.activePlayerId = null;
+      this.turnEndsAt = 0;
+      return;
+    }
+    if (this.turnIndex >= this.turnOrder.length) this.turnIndex = 0;
+    this.activePlayerId = this.turnOrder[this.turnIndex];
+    this.turnEndsAt = Date.now() + this.turnDurationMs;
+    this.replenishQueue();
+    // assign top piece to active player
+    const piece = this.pieceQueue.shift() || randomPiece();
+    this.assignedPieceByPlayer.set(this.activePlayerId, piece);
+    // Emit piece directly to active player later in event handler
+  }
+
+  advanceTurn() {
+    if (this.turnOrder.length === 0) {
+      this.activePlayerId = null;
+      this.turnEndsAt = 0;
+      return;
+    }
+    this.turnIndex = (this.turnIndex + 1) % this.turnOrder.length;
+    this.startTurn();
+  }
+
+  replenishQueue() {
+    while (this.pieceQueue.length < 20) this.pieceQueue.push(randomPiece());
   }
 }
 
@@ -216,14 +294,28 @@ io.on('connection', (socket) => {
     }
     players.set(socket.id, { roomId, playerName });
     socket.join(roomId);
-    socket.emit('game-state', room.state());
-    socket.to(roomId).emit('game-state', room.state());
+    io.to(roomId).emit('game-state', room.state());
+    // If this socket is now the active player and has an assigned piece, send it
+    if (room.activePlayerId === socket.id) {
+      const assigned = room.assignedPieceByPlayer.get(socket.id);
+      if (assigned) socket.emit('piece', assigned);
+    }
   });
 
   socket.on('request-piece', ({ roomId }) => {
     const pdata = players.get(socket.id);
     if (!pdata || pdata.roomId !== roomId) return;
-    socket.emit('piece', randomPiece());
+    const room = gameRooms.get(roomId);
+    if (!room) return;
+    // Only the active player may receive a piece; serve the assigned one
+    if (room.activePlayerId !== socket.id) return;
+    let p = room.assignedPieceByPlayer.get(socket.id);
+    if (!p) {
+      room.replenishQueue();
+      p = room.pieceQueue.shift() || randomPiece();
+      room.assignedPieceByPlayer.set(socket.id, p);
+    }
+    socket.emit('piece', p);
   });
 
   socket.on('place-item', ({ roomId, piece, x, y, rotation }) => {
@@ -234,7 +326,15 @@ io.on('connection', (socket) => {
     const rotated = rotateMatrix(piece.shape, rotation || 0);
     const res = room.placePiece({ socketId: socket.id, shape: rotated, color: piece.color, x, y });
     socket.emit('placement-result', res);
-    if (res.ok) io.to(roomId).emit('game-state', room.state());
+    if (res.ok) {
+      // Broadcast new state
+      io.to(roomId).emit('game-state', room.state());
+      // Push next piece to new active player (if any)
+      if (room.activePlayerId) {
+        const nextAssigned = room.assignedPieceByPlayer.get(room.activePlayerId);
+        if (nextAssigned) io.to(room.activePlayerId).emit('piece', nextAssigned);
+      }
+    }
   });
 
   socket.on('reset', ({ roomId }) => {
