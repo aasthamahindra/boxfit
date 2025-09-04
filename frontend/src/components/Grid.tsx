@@ -235,11 +235,11 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
 
   const rotate = () => setRotation((r) => (r + 1) % 4);
   const reset = () => socketRef.current?.emit('reset', { roomId });
-  const newPiece = () => {
-    const isMyTurn = state.activePlayerId === me;
-    if (!isMyTurn) return;
-    socketRef.current?.emit('request-piece', { roomId });
-  };
+  // const newPiece = () => {
+  //   const isMyTurn = state.activePlayerId === me;
+  //   if (!isMyTurn) return;
+  //   socketRef.current?.emit('request-piece', { roomId });
+  // };
 
   const renderCells = () => {
     const cells: JSX.Element[] = [];
@@ -364,7 +364,7 @@ const Grid: React.FC<GridProps> = ({ playerName, roomId }) => {
 
           <div className={styles.controls}>
             <button className={styles.controlButton} onClick={rotate} disabled={state.activePlayerId !== me}>Rotate (R)</button>
-            <button className={styles.controlButton} onClick={newPiece} disabled={state.activePlayerId !== me}>New Piece</button>
+            {/* <button className={styles.controlButton} onClick={newPiece} disabled={state.activePlayerId !== me}>New Piece</button> */}
             <button className={styles.controlButton} onClick={reset}>Reset Grid</button>
           </div>
         </div>
@@ -431,6 +431,7 @@ function getGridCoordsFromEvent(
   gridEl: HTMLDivElement,
   shape: number[][],
   rotation: number,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _clamp: boolean = true,
 ) {
   const rect = gridEl.getBoundingClientRect();
