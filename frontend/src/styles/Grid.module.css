@@ -9,42 +9,6 @@
   font-family: 'Roboto', sans-serif;
 }
 
-/* Left Panel */
-.leftPanel {
-  width: 250px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  background-color: #16213e;
-  border-radius: 10px;
-  padding: 20px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-/* Score Section */
-.scoreSection {
-  background-color: #0f3460;
-  border-radius: 8px;
-  padding: 15px;
-  text-align: center;
-}
-
-.score, .lines {
-  font-size: 18px;
-  font-weight: 700;
-  color: #e94560;
-  margin: 5px 0;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-/* Next Item Section */
-.nextSection {
-  background-color: #0f3460;
-  border-radius: 8px;
-  padding: 15px;
-}
-
 .sectionTitle {
   font-size: 16px;
   font-weight: 700;
@@ -89,69 +53,6 @@
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Players Section */
-.playersSection {
-  background-color: #0f3460;
-  border-radius: 8px;
-  padding: 15px;
-  flex-grow: 1;
-}
-
-.playersList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.playerItem {
-  background-color: #16213e;
-  border-radius: 6px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.playerInfo {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.playerName {
-  font-weight: 500;
-  color: #e6e6e6;
-  font-size: 14px;
-}
-
-.playerScore {
-  font-weight: 700;
-  color: #4cc9f0;
-  font-size: 14px;
-}
-
-.playerStatus {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  align-self: flex-start;
-}
-
-.playerStatus.alive {
-  background-color: rgba(76, 201, 240, 0.2);
-  color: #4cc9f0;
-}
-
-.playerStatus.eliminated {
-  background-color: rgba(233, 69, 96, 0.2);
-  color: #e94560;
-}
-
-/* Game Area */
 .gameContainer {
   display: flex;
   flex-direction: column;
@@ -186,7 +87,6 @@
   position: relative; /* allow absolute overlay inside */
 }
 
-/* Absolute overlay layer above grid cells for hover preview */
 .overlayLayer {
   position: absolute;
   top: 10px;   /* match .gameGrid padding */
@@ -204,12 +104,6 @@
   border-radius: 2px;
 }
 
-.row {
-  display: flex;
-  width: 100%;
-  height: 100%;
-}
-
 .cell {
   flex: 1;
   min-width: 0;
@@ -223,7 +117,6 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Cell colors */
 .cell.color-0 { background-color: #CAADFF; }
 .cell.color-1 { background-color: #FFADC7; }
 .cell.color-2 { background-color: #F4C8A6; }
@@ -231,12 +124,10 @@
 .cell.color-4 { background-color: #e2f0cb; }
 .cell.color-5 { background-color: #e9f5db; }
 
-/* Active cell state */
 .cell.active {
   box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.3);
 }
 
-/* Grid container */
 .gridContainer {
   display: flex;
   flex-direction: column;
@@ -244,7 +135,6 @@
   gap: 20px;
 }
 
-/* Game info */
 .gameInfo {
   background: #0f3460;
   border-radius: 8px;
@@ -261,7 +151,6 @@
   font-size: 1.2rem;
 }
 
-/* Player list */
 .playersList {
   display: flex;
   flex-direction: column;
@@ -310,67 +199,12 @@
   color: #4cc9f0;
 }
 
-.turnIndicator {
-  color: #4cc9f0;
-  margin-left: 8px;
-  animation: pulse 1s infinite;
-}
-
 @keyframes pulse {
   0% { opacity: 0.5; }
   50% { opacity: 1; }
   100% { opacity: 0.5; }
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(10, 25px);
-  grid-template-rows: repeat(12, 25px);
-  gap: 3px;
-  background-color: #0f3460;
-  padding: 20px;
-  border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-/* Overlay for game states */
-.overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  border-radius: 10px;
-  z-index: 10;
-}
-
-.overlayContent {
-  background-color: #16213e;
-  padding: 30px 40px;
-  border-radius: 10px;
-  text-align: center;
-  max-width: 80%;
-}
-
-.overlayContent h2 {
-  color: #e94560;
-  margin-bottom: 15px;
-  font-size: 24px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.overlayContent p {
-  color: #e6e6e6;
-  margin-bottom: 20px;
-  font-size: 16px;
-}
-
-/* Controls */
 .controls {
   margin-top: auto;
   display: flex;
@@ -404,107 +238,17 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-/* Right Panel - Leaderboard */
-.rightPanel {
-  width: 220px;
-  background-color: #16213e;
-  border-radius: 10px;
-  padding: 20px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-.leaderboard {
-  margin-top: 10px;
-  max-height: 400px;
-  overflow-y: auto;
-  padding-right: 5px;
-}
-
-.leaderboardEntry {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.rank {
-  font-weight: 700;
-  color: #e94560;
-  font-size: 14px;
-  min-width: 30px;
-}
-
-.leaderboardName {
-  flex-grow: 1;
-  margin: 0 10px;
-  font-size: 14px;
-  color: #e6e6e6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.leaderboardScore {
-  font-weight: 700;
-  color: #4cc9f0;
-  font-size: 14px;
-}
-
-.noPlayers {
-  text-align: center;
-  color: #a8a8a8;
-  font-style: italic;
-  padding: 15px 0;
-  font-size: 14px;
-}
-
-/* Responsive adjustments */
+/* Responsive adjustments (safe subset) */
 @media (max-width: 1200px) {
   .gameContainer {
     flex-direction: column;
   }
-  
-  .leftPanel, .rightPanel {
-    width: 100%;
-    margin: 0 0 20px 0;
-  }
-  
   .gameArea {
     order: -1;
     margin-bottom: 20px;
   }
 }
 
-.readyButton {
-  padding: 10px 20px;
-  font-size: 1.2em;
-  background-color: #4CAF50;
-  color: white;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  margin: 10px 0;
-  transition: background-color 0.3s;
-}
-
-.readyButton:hover {
-  background-color: #45a049;
-}
-
-.playerReadyStatus {
-  margin-top: 20px;
-  text-align: left;
-}
-
-.playerStatus {
-  margin: 5px 0;
-  padding: 5px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
-/* Draggable helpers for WebKit/Chrome */
 .draggable {
   -webkit-user-drag: element;
   user-select: none;
