@@ -121,6 +121,3 @@ Frontend (`frontend/package.json`):
 - Add authentication to prevent name collisions.
 - Deploy backend (e.g., Render, Railway) and frontend (e.g., Netlify, Vercel). Update CORS and Socket.IO origins accordingly.
 
-## License
-
-MIT
