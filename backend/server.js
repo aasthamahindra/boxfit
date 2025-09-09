@@ -31,6 +31,7 @@ setInterval(() => {
   const now = Date.now();
   for (const [roomId, room] of gameRooms.entries()) {
     if (!room.activePlayerId) continue;
+    if (room.gameState !== 'playing' || room.players.size < 2) continue;
     if (now > room.turnEndsAt) {
       // Skip current player's turn
       const cur = room.activePlayerId;
@@ -104,8 +105,8 @@ class GameRoom {
     this.id = id;
     this.players = new Map(); // socketId -> { id, name, score }
     this.grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
-    this.gameState = 'playing';
-    this.maxPlayers = 8;
+    this.gameState = 'waiting';
+    this.maxPlayers = 2;
     this.lastActivity = Date.now();
     // turn-based state
     this.turnOrder = []; // socketId[]
@@ -123,8 +124,16 @@ class GameRoom {
     this.turnOrder.push(socketId);
     this.assignedPieceByPlayer.set(socketId, null);
     this.touch();
-    // if first player, start turns
-    if (!this.activePlayerId) this.startTurn();
+    // Start turns only when exactly 2 players are present
+    if (this.players.size === 2 && !this.activePlayerId) {
+      this.gameState = 'playing';
+      this.startTurn();
+      // Emit assigned piece to active player when second player joins
+      const assigned = this.assignedPieceByPlayer.get(this.activePlayerId);
+      if (assigned) io.to(this.activePlayerId).emit('piece', assigned);
+    } else {
+      this.gameState = 'waiting';
+    }
     return true;
   }
 
@@ -133,8 +142,13 @@ class GameRoom {
     this.assignedPieceByPlayer.delete(socketId);
     const idx = this.turnOrder.indexOf(socketId);
     if (idx !== -1) this.turnOrder.splice(idx, 1);
-    if (this.activePlayerId === socketId) {
-      // If active player left, advance turn safely
+    // If player leaves, ensure game only runs with 2 players
+    if (this.players.size < 2) {
+      this.gameState = 'waiting';
+      this.activePlayerId = null;
+      this.turnEndsAt = 0;
+    } else if (this.activePlayerId === socketId) {
+      // If active player left while still 2 players remain, advance turn safely
       this.activePlayerId = null;
       this.advanceTurn();
     }
@@ -160,6 +174,7 @@ class GameRoom {
   placePiece({ socketId, shape, color, x, y }) {
     if (!this.players.has(socketId)) return { ok: false, reason: 'not-in-room' };
     if (this.activePlayerId && socketId !== this.activePlayerId) return { ok: false, reason: 'not-your-turn' };
+    if (this.gameState !== 'playing') return { ok: false, reason: 'game-not-started' };
     if (!this.canPlace(shape, x, y)) return { ok: false, reason: 'invalid-placement' };
     // Place the piece
     for (let ry = 0; ry < shape.length; ry++) {
@@ -216,14 +231,17 @@ class GameRoom {
 
   // --- Turn helpers ---
   startTurn() {
-    if (this.turnOrder.length === 0) {
+    // Game can only run with exactly 2 players
+    if (this.turnOrder.length === 0 || this.players.size < 2) {
       this.activePlayerId = null;
       this.turnEndsAt = 0;
+      this.gameState = 'waiting';
       return;
     }
     if (this.turnIndex >= this.turnOrder.length) this.turnIndex = 0;
     this.activePlayerId = this.turnOrder[this.turnIndex];
     this.turnEndsAt = Date.now() + this.turnDurationMs;
+    this.gameState = 'playing';
     this.replenishQueue();
     // assign top piece to active player
     const piece = this.pieceQueue.shift() || randomPiece();
@@ -232,9 +250,10 @@ class GameRoom {
   }
 
   advanceTurn() {
-    if (this.turnOrder.length === 0) {
+    if (this.turnOrder.length === 0 || this.players.size < 2) {
       this.activePlayerId = null;
       this.turnEndsAt = 0;
+      this.gameState = 'waiting';
       return;
     }
     this.turnIndex = (this.turnIndex + 1) % this.turnOrder.length;
@@ -307,6 +326,7 @@ io.on('connection', (socket) => {
     if (!pdata || pdata.roomId !== roomId) return;
     const room = gameRooms.get(roomId);
     if (!room) return;
+    if (room.gameState !== 'playing' || room.players.size < 2) return;
     // Only the active player may receive a piece; serve the assigned one
     if (room.activePlayerId !== socket.id) return;
     let p = room.assignedPieceByPlayer.get(socket.id);
